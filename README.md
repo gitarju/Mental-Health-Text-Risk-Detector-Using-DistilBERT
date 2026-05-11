@@ -12,7 +12,7 @@ This project sits at the intersection of Artificial Intelligence, Data Science, 
 *   Vishnu
 
 ## Dataset
-The model is trained on dataset obtained from Kaggle ([Dataset Link](https://www.kaggle.com/datasets/clmentbisaillon/fake-and-real-news-dataset)). Reddit provides a rich source of anonymous, highly expressive text where users openly discuss psychological struggles. The dataset contains posts categorized by conditions such as depression, anxiety, stress, and neutral control groups. Given the unstructured nature of social media text, the data undergoes rigorous preprocessing to handle slang, abbreviations, and noise.
+The model is trained on dataset obtained from Kaggle ([Dataset Link](https://www.kaggle.com/datasets/entenam/reddit-mental-health-dataset)). Reddit provides a rich source of anonymous, highly expressive text where users openly discuss psychological struggles. The dataset contains posts categorized by conditions such as depression, anxiety, stress, and neutral control groups. Given the unstructured nature of social media text, the data undergoes rigorous preprocessing to handle slang, abbreviations, and noise.
 
 ## System Architecture
 
