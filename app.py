@@ -40,11 +40,7 @@ except Exception:
     stop_words = set(stopwords.words('english'))
     sia = SentimentIntensityAnalyzer()
 
-try:
-    nlp = spacy.load("en_core_web_sm")
-except OSError:
-    subprocess.check_call([sys.executable, "-m", "spacy", "download", "en_core_web_sm"])
-    nlp = spacy.load("en_core_web_sm")
+nlp = spacy.load("en_core_web_sm")
 
 st.set_page_config(page_title="Mental Health Text Risk Detector", layout="wide")
 

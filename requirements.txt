@@ -1,4 +1,5 @@
-spacy
+spacy==3.8.13
+https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0.tar.gz
 scikit-learn==1.8.0
 pandas
 numpy==2.4.1
