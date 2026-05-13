@@ -22,11 +22,11 @@ Raw text is cleaned and normalized. This includes removing URLs, punctuation, an
 ### 2. Natural Language Processing
 The system utilizes advanced NLP techniques to analyze sentence structure and meaning. This includes tokenization, part-of-speech tagging, and dependency parsing to move beyond simple keyword matching and understand deeper linguistic behaviors.
 
-### 3. Feature Extraction
-Behavioral feature extraction is crucial to the system's intelligence. The application looks for self-referencing pronouns and emotionally intense vocabulary. Text is converted into numerical representations using TF-IDF (Term Frequency-Inverse Document Frequency), which assigns mathematical weight to significant distress markers.
+### 3. Transformer-based NLP Architecture
+Instead of traditional bag-of-words or TF-IDF approaches, the system utilizes a **Transformer-based deep learning architecture**. Specifically, it uses a fine-tuned `DistilBERT` model provided by Hugging Face. The self-attention mechanisms within DistilBERT allow the model to understand the deep contextual meaning of the text, capturing nuances that simpler models might miss.
 
-### 4. Machine Learning Classification
-The project employs supervised machine learning models to classify the text into risk categories. During training, the models learn the complex relationships between linguistic patterns and specific emotional states. The system evaluates these models using strict performance metrics, prioritizing high recall to ensure genuine distress signals are not missed.
+### 4. Deep Learning Classification & Hugging Face Integration
+The DistilBERT model was fine-tuned on the Reddit dataset to classify text into distinct emotional risk categories. To ensure the application remains lightweight and easy to deploy (such as on Streamlit Community Cloud), the 267MB+ model weights are hosted externally on the **Hugging Face Model Hub**. At runtime, the Streamlit app securely fetches and caches the model directly from Hugging Face via the `transformers` pipeline.
 
 ### 5. Application Interface
 The final predictive model is integrated into a Streamlit web application. Users can input text to receive an instant analysis, including a categorized risk profile, confidence breakdown, and automated detection of severe crisis indicators.

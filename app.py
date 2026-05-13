@@ -11,6 +11,8 @@ try:
     import html
     import nltk
     import plotly.graph_objects as go
+    import torch
+    from transformers import pipeline, AutoModelForSequenceClassification, AutoTokenizer
 except ImportError as e:
     print(f"Missing dependency detected: {e}. Auto-installing from requirements.txt...")
     try:
@@ -22,6 +24,8 @@ except ImportError as e:
         import re
         import nltk
         import plotly.graph_objects as go
+        import torch
+        from transformers import pipeline, AutoModelForSequenceClassification, AutoTokenizer
     except Exception as install_error:
         print(f"Failed to install dependencies automatically: {install_error}")
         print("Please install them manually using: pip install -r requirements.txt")
@@ -243,16 +247,20 @@ st.markdown("<p class='sub-header'>Paste text for instant AI emotional analysis.
 
 
 
-@st.cache_resource
+@st.cache_resource(show_spinner="Loading model from Hugging Face (this may take a minute on first run)...")
 def load_model():
-    if os.path.exists("models/model.joblib"):
-        return joblib.load("models/model.joblib")
-    return None
+    model_id = "Gojosen/mental-health-distilbert"
+    try:
+        from transformers import pipeline
+        # Use top_k=None to get probabilities for all classes
+        return pipeline("text-classification", model=model_id, top_k=None)
+    except Exception as e:
+        return None
 
 model = load_model()
 
 if model is None:
-    st.error("Model file not found at `models/model.joblib`. Please run the training script before using this app.")
+    st.error(f"Failed to load the model from Hugging Face. Please ensure `Gojosen/mental-health-distilbert` is completely uploaded.")
 
 def clean_text(text):
     if not isinstance(text, str):
@@ -285,9 +293,9 @@ def perform_analysis(text):
         st.warning("Please enter valid text for analysis. Numbers and URLs alone cannot be analyzed.")
         return False
 
-    raw_prediction = model.predict([cleaned])[0]
-    probabilities = model.predict_proba([cleaned])[0]
-    prob_dict = dict(zip(model.classes_, probabilities))
+    raw_prediction = model(cleaned)
+    # The pipeline with top_k=None returns a list of lists of dicts: [[{'label': 'A', 'score': 0.9}, ...]]
+    prob_dict = {item['label']: item['score'] for item in raw_prediction[0]}
     
     # 1. Extreme Crisis Keyword Bypass (Immediate Escalation)
     # This dictionary is enriched by the top statistical feature weights natively learned by the core TF-IDF model
@@ -321,12 +329,25 @@ def perform_analysis(text):
     themes = list(set([chunk.text.lower() for chunk in doc.noun_chunks if len(chunk.text.split()) < 4]))[:5]
     actions = list(set([token.lemma_.lower() for token in doc if token.pos_ == "VERB" and not token.is_stop and token.is_alpha]))[:5]
     
+    # Secondary Heuristic Categories
+    text_lower = text.lower()
+    secondary_emotions = []
+    if any(kw in text_lower for kw in ["grief", "loss", "died", "passed away", "mourning", "miss him", "miss her", "funeral"]):
+        secondary_emotions.append("Grief")
+    if any(kw in text_lower for kw in ["burnout", "exhausted", "drained", "overworked", "tired of everything", "running on empty"]):
+        secondary_emotions.append("Burnout")
+    if any(kw in text_lower for kw in ["angry", "furious", "hate", "frustrated", "rage", "mad", "pissed"]):
+        secondary_emotions.append("Anger")
+    if any(kw in text_lower for kw in ["stress", "overwhelmed", "pressure", "panicking", "tense", "too much", "deadline"]):
+        secondary_emotions.append("Stress")
+    
     st.session_state.analysis_results = {
         "original_text": text,
         "prediction": prediction,
-        "probabilities": dict(zip(model.classes_, probabilities)),
+        "probabilities": prob_dict,
         "syntax": {"themes": themes, "actions": actions},
-        "has_crisis_keyword": has_crisis_keyword
+        "has_crisis_keyword": has_crisis_keyword,
+        "secondary_emotions": secondary_emotions
     }
     return True
 
@@ -425,6 +446,26 @@ else:
             "Continuing to check in with yourself is a great habit for long-term emotional well-being.",
             "Remember that maintaining mental health is an ongoing journey. Keep prioritizing your self-care routines.",
             "Your emotional awareness is a great strength. Continue to prioritize balance and well-being in your daily life."
+        ],
+        "Grief": [
+            "Grief is a profound and personal process. There is no right or wrong way to feel, and it's okay to take the time you need.",
+            "Losing someone or something important is incredibly painful. Please be gentle with yourself as you navigate these difficult waves.",
+            "The pain of loss can feel overwhelming. Remember that you don't have to carry this grief alone, and reaching out can help."
+        ],
+        "Burnout": [
+            "Feeling entirely drained is a clear signal from your body and mind to rest. It is completely valid to step back and recharge.",
+            "You are carrying so much right now. Taking time to disconnect and recover is not a luxury, it is a necessity.",
+            "Burnout can make everything feel heavy. Give yourself permission to pause and prioritize your own well-being."
+        ],
+        "Anger": [
+            "Anger is a natural and valid emotion. Finding a safe, constructive way to express it can help relieve the pressure you are feeling.",
+            "It is completely okay to feel frustrated or furious. Allow yourself to feel it, and then try to find a healthy outlet to release it.",
+            "Strong feelings of anger often show that boundaries have been crossed. Take a deep breath, and validate your own feelings."
+        ],
+        "Stress": [
+            "When everything piles up, it is easy to feel overwhelmed. Try breaking things down into smaller steps, or just focusing on the next hour.",
+            "Stress can be incredibly taxing on your body and mind. Remember to take moments for deep breathing and to step away when needed.",
+            "It sounds like you are under a lot of pressure right now. Be sure to carve out a little time just for yourself to decompress."
         ]
     }
 
@@ -469,8 +510,24 @@ else:
                 "You know your own feelings best."
             )
     
+    # Secondary emotions check
+    secondary_emotions = res.get("secondary_emotions", [])
+    has_secondary = bool(secondary_emotions)
+    primary_secondary = secondary_emotions[0] if has_secondary else None
+
+    # Override title and description if we have strong secondary emotions and prediction isn't severe
+    if has_secondary and pred not in ["High Risk", "Depression"]:
+        title = f"Signs of {primary_secondary}"
+        desc = (
+            f"Your words reflect feelings closely tied to {primary_secondary.lower()}. "
+            f"These emotions can be challenging to navigate. "
+            f"It's important to acknowledge them and take the space you need."
+        )
+        
     # Select randomized supportive message based on category
-    if is_mild:
+    if has_secondary and pred not in ["High Risk", "Depression"]:
+        msg_category = primary_secondary
+    elif is_mild:
         msg_category = "Mild"
     elif is_mixed:
         msg_category = "Mixed"

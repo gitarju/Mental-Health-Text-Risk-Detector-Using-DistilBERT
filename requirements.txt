@@ -10,3 +10,6 @@ Pillow
 jupyter
 joblib
 plotly
+torch
+transformers
+datasets
