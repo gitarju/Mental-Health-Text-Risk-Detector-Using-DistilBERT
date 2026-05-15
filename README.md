@@ -31,5 +31,32 @@ The DistilBERT model was fine-tuned on the Reddit dataset to classify text into 
 ### 5. Application Interface
 The final predictive model is integrated into a Streamlit web application. Users can input text to receive an instant analysis, including a categorized risk profile, confidence breakdown, and automated detection of severe crisis indicators.
 
+## How to Run Locally
+
+To run the application on your own machine, ensure you have Python 3.8+ installed.
+
+1. **Clone the repository:**
+   ```bash
+   git clone https://github.com/gitarju/Mental-Health-Text-Risk-Detector-Using-DistilBERT.git
+   cd Mental-Health-Text-Risk-Detector-Using-DistilBERT
+   ```
+
+2. **Install the required Python packages:**
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+3. **Download the SpaCy English language model:**
+   This is required for the NLP syntactic analysis step.
+   ```bash
+   python -m spacy download en_core_web_sm
+   ```
+
+4. **Launch the Streamlit web application:**
+   ```bash
+   streamlit run app.py
+   ```
+   *Note: On the first run, the app will automatically download the 267MB DistilBERT model weights from the Hugging Face Hub. This may take a minute depending on your internet connection.*
+
 ## Ethical Considerations & Disclaimer
 This system is designed strictly for educational, research, and awareness purposes. **It is not a medical diagnostic tool.** Machine learning models can produce false positives and false negatives, and they struggle with complex nuances such as sarcasm or cultural variations in emotional expression. Predictions made by this software should never replace professional psychological assessment or clinical judgment.

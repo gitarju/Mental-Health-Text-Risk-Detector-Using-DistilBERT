@@ -2,49 +2,36 @@ import os
 import sys
 import subprocess
 
-# Auto-install dependencies if they are missing
-try:
-    import streamlit as st
-    import joblib
-    import spacy
-    import re
-    import html
-    import nltk
-    import plotly.graph_objects as go
-    import torch
-    from transformers import pipeline, AutoModelForSequenceClassification, AutoTokenizer
-except ImportError as e:
-    print(f"Missing dependency detected: {e}. Auto-installing from requirements.txt...")
+import streamlit as st
+import joblib
+import spacy
+import re
+import html
+import nltk
+import plotly.graph_objects as go
+import torch
+from transformers import pipeline, AutoModelForSequenceClassification, AutoTokenizer
+
+st.set_page_config(page_title="Mental Health Detector", layout="wide")
+@st.cache_resource(show_spinner=False)
+def load_nlp_resources():
     try:
-        subprocess.check_call([sys.executable, "-m", "pip", "install", "-r", "requirements.txt"])
-        print("Dependencies installed successfully! Reloading imports...")
-        import streamlit as st
-        import joblib
-        import spacy
-        import re
-        import nltk
-        import plotly.graph_objects as go
-        import torch
-        from transformers import pipeline, AutoModelForSequenceClassification, AutoTokenizer
-    except Exception as install_error:
-        print(f"Failed to install dependencies automatically: {install_error}")
-        print("Please install them manually using: pip install -r requirements.txt")
-        sys.exit(1)
+        from nltk.corpus import stopwords
+        from nltk.sentiment.vader import SentimentIntensityAnalyzer
+        stop_words = set(stopwords.words('english'))
+        sia = SentimentIntensityAnalyzer()
+    except Exception:
+        nltk.download('stopwords')
+        nltk.download('vader_lexicon')
+        from nltk.corpus import stopwords
+        from nltk.sentiment.vader import SentimentIntensityAnalyzer
+        stop_words = set(stopwords.words('english'))
+        sia = SentimentIntensityAnalyzer()
+        
+    nlp_model = spacy.load("en_core_web_sm")
+    return stop_words, sia, nlp_model
 
-try:
-    from nltk.corpus import stopwords
-    from nltk.sentiment.vader import SentimentIntensityAnalyzer
-    stop_words = set(stopwords.words('english'))
-    sia = SentimentIntensityAnalyzer()
-except Exception:
-    nltk.download('stopwords')
-    nltk.download('vader_lexicon')
-    from nltk.corpus import stopwords
-    from nltk.sentiment.vader import SentimentIntensityAnalyzer
-    stop_words = set(stopwords.words('english'))
-    sia = SentimentIntensityAnalyzer()
-
-nlp = spacy.load("en_core_web_sm")
+stop_words, sia, nlp = load_nlp_resources()
 
 st.set_page_config(page_title="Mental Health Text Risk Detector", layout="wide")
 
@@ -247,20 +234,29 @@ st.markdown("<p class='sub-header'>Paste text for instant AI emotional analysis.
 
 
 
-@st.cache_resource(show_spinner="Loading model from Hugging Face (this may take a minute on first run)...")
+@st.cache_resource(show_spinner="Loading model (this may take a minute on first run)...")
 def load_model():
-    model_id = "Gojosen/mental-health-distilbert"
+    local_path = "models/distilbert"
+    hf_model_id = "Gojosen/mental-health-distilbert"
+    
     try:
         from transformers import pipeline
-        # Use top_k=None to get probabilities for all classes
-        return pipeline("text-classification", model=model_id, top_k=None)
+        
+        # 1. Try loading from local folder first (Instant for localhost)
+        if os.path.exists(local_path):
+            return pipeline("text-classification", model=local_path, top_k=None)
+            
+        # 2. Fallback to Hugging Face download (For Streamlit Cloud deployment)
+        return pipeline("text-classification", model=hf_model_id, top_k=None)
+        
     except Exception as e:
+        st.error(f"Model load error: {e}")
         return None
 
 model = load_model()
 
 if model is None:
-    st.error(f"Failed to load the model from Hugging Face. Please ensure `Gojosen/mental-health-distilbert` is completely uploaded.")
+    st.error(f"Failed to load the model. Please ensure `{hf_model_id}` is completely uploaded or `models/distilbert` exists locally.")
 
 def clean_text(text):
     if not isinstance(text, str):
@@ -332,13 +328,17 @@ def perform_analysis(text):
     # Secondary Heuristic Categories
     text_lower = text.lower()
     secondary_emotions = []
-    if any(kw in text_lower for kw in ["grief", "loss", "died", "passed away", "mourning", "miss him", "miss her", "funeral"]):
+    
+    def match_kw(keywords):
+        return any(re.search(rf"\b{re.escape(kw)}\b", text_lower) for kw in keywords)
+
+    if match_kw(["grief", "loss", "died", "passed away", "mourning", "miss him", "miss her", "funeral"]):
         secondary_emotions.append("Grief")
-    if any(kw in text_lower for kw in ["burnout", "exhausted", "drained", "overworked", "tired of everything", "running on empty"]):
+    if match_kw(["burnout", "exhausted", "drained", "overworked", "tired of everything", "running on empty"]):
         secondary_emotions.append("Burnout")
-    if any(kw in text_lower for kw in ["angry", "furious", "hate", "frustrated", "rage", "mad", "pissed"]):
+    if match_kw(["angry", "furious", "hate", "frustrated", "rage", "mad", "pissed"]):
         secondary_emotions.append("Anger")
-    if any(kw in text_lower for kw in ["stress", "overwhelmed", "pressure", "panicking", "tense", "too much", "deadline"]):
+    if match_kw(["stress", "overwhelmed", "pressure", "panicking", "tense", "too much", "deadline"]):
         secondary_emotions.append("Stress")
     
     st.session_state.analysis_results = {
@@ -390,11 +390,8 @@ else:
     
     res = st.session_state.analysis_results
     
-    # Display Original Text
-    st.markdown("### Analyzed Text")
     safe_text = html.escape(res.get('original_text', ''))
-    st.markdown(f"<div style='background-color: #ffffff; padding: 1rem; border-radius: 8px; border: 1px solid #e2e8f0; margin-bottom: 1.5rem; color: #475569; font-style: italic;'>\"{safe_text}\"</div>", unsafe_allow_html=True)
-
+    
     pred = res["prediction"]
     # Normalize labels from the new model
     if pred == "High Risk (SW)":
@@ -471,7 +468,8 @@ else:
 
     # Main Card
     is_mild = False
-    is_mixed = False
+    is_moderate_mixed = False
+    is_mild_mixed = False
 
     if pred in ["High Risk", "Depression", "Anxiety", "Loneliness", "Mental Health"]:
         if max_prob < 35:
@@ -492,15 +490,28 @@ else:
                 f"can make a real difference."
             )
     else:
-        risk_mass = sum(probs.get(k, 0) for k in ["High Risk", "Depression", "Anxiety", "Loneliness", "Mental Health"])
-        if risk_mass > 0.65:
-            is_mixed = True
-            title = "Something Worth Acknowledging"
+        # Calculate maximum single risk probability and total sum of all negative probabilities
+        risk_probs = [probs.get(k, 0) for k in ["High Risk", "Depression", "Anxiety", "Loneliness", "Mental Health"]]
+        risk_mass = sum(risk_probs)
+        max_negative_prob = max(risk_probs) * 100 if risk_probs else 0
+        
+        # New threshold logic preventing false positives
+        if risk_mass > 0.65 and max_negative_prob >= 25.0:
+            is_moderate_mixed = True
+            title = "Signs of Emotional Fatigue"
             desc = (
                 "There's a quiet heaviness in what you've shared — nothing alarming, "
-                "but enough to be worth sitting with. "
+                "but enough to indicate multiple layers of emotional weight. "
                 "If it's been weighing on you, speaking with someone "
                 "you trust can bring some relief."
+            )
+        elif risk_mass > 0.45 and max_negative_prob >= 20.0:
+            is_mild_mixed = True
+            title = "Slight Emotional Weight"
+            desc = (
+                "We detect a subtle mix of underlying stress or emotional fatigue. "
+                "It's completely normal to feel scattered sometimes. "
+                "Take a moment to check in with yourself and prioritize some rest."
             )
         else:
             title = "You Seem to Be Doing Okay"
@@ -515,8 +526,10 @@ else:
     has_secondary = bool(secondary_emotions)
     primary_secondary = secondary_emotions[0] if has_secondary else None
 
-    # Override title and description if we have strong secondary emotions and prediction isn't severe
-    if has_secondary and pred not in ["High Risk", "Depression"]:
+    # Override title and description if we have strong secondary emotions and the main prediction isn't severe
+    override_eligible = is_mild or is_moderate_mixed or is_mild_mixed or pred == "Other"
+    
+    if has_secondary and override_eligible:
         title = f"Signs of {primary_secondary}"
         desc = (
             f"Your words reflect feelings closely tied to {primary_secondary.lower()}. "
@@ -525,11 +538,11 @@ else:
         )
         
     # Select randomized supportive message based on category
-    if has_secondary and pred not in ["High Risk", "Depression"]:
+    if has_secondary and override_eligible:
         msg_category = primary_secondary
     elif is_mild:
         msg_category = "Mild"
-    elif is_mixed:
+    elif is_moderate_mixed or is_mild_mixed:
         msg_category = "Mixed"
     elif pred in support_msgs:
         msg_category = pred
@@ -547,131 +560,127 @@ else:
             "</div>"
         )
     
-    st.markdown(
-        f"<div class='result-main-card'>\n"
-        f"{banner_html}\n"
-        f"<div class='result-label'>Final Analysis Result</div>\n"
-        f"<div class='result-title'>{title}</div>\n"
-        f"<div class='result-desc'>{desc}</div>\n"
-        f"<div style='margin-top: 1.5rem; padding: 1rem; background-color: #f8f9fa; border-left: 4px solid #4cc9f0; border-radius: 4px; font-style: italic; color: #495057;'>\n"
-        f"\"{support_quote}\"\n"
-        f"</div>\n"
-        f"</div>", 
-        unsafe_allow_html=True
-    )
+    st.write("") # Spacing before main grid
     
-    # Secondary Row
-    col1, col2 = st.columns([1.5, 1])
+    # === TOP ROW: Main Card & Risk Gauge ===
+    row1_col_main, row1_col_gauge = st.columns([1.5, 1])
     
-    with col1:
-        st.markdown("### Confidence Breakdown")
-        st.write("")
+    with row1_col_main:
+        # Display Original Text
+        st.markdown("<h3 style='margin-top: 0;'>Analyzed Text</h3>", unsafe_allow_html=True)
+        st.markdown(f"<div style='background-color: #ffffff; padding: 1rem; border-radius: 8px; border: 1px solid #e2e8f0; margin-bottom: 1.5rem; color: #475569; font-style: italic;'>\"{safe_text}\"</div>", unsafe_allow_html=True)
+
+        st.markdown(
+            f"<div class='result-main-card'>\n"
+            f"{banner_html}\n"
+            f"<div class='result-label'>Final Analysis Result</div>\n"
+            f"<div class='result-title'>{title}</div>\n"
+            f"<div class='result-desc'>{desc}</div>\n"
+            f"<div style='margin-top: 1.5rem; padding: 1rem; background-color: #f8f9fa; border-left: 4px solid #4cc9f0; border-radius: 4px; font-style: italic; color: #495057;'>\n"
+            f"\"{support_quote}\"\n"
+            f"</div>\n"
+            f"</div>", 
+            unsafe_allow_html=True
+        )
         
-        # Dynamically show all probabilities sorted by confidence
-        sorted_probs = sorted(probs.items(), key=lambda x: x[1], reverse=True)
-        
-        for raw_label, val_dec in sorted_probs:
-            val = val_dec * 100
+    with row1_col_gauge:
+        with st.container(border=True):
+            st.markdown("<h3 style='margin-top: 0;'>Risk Profile</h3>", unsafe_allow_html=True)
             
-            # Map labels to friendly UI text
-            if raw_label in ["Normal", "Other"]:
-                label = "Normal / No Concern"
-            elif raw_label == "High Risk":
-                label = "High Risk / Severity"
-            elif raw_label == "Mild":
-                label = "Mild Stress Indicators"
+            # Risk Severity Gauge using Plotly
+            risk_prob = max(probs.get("Anxiety", 0), probs.get("Depression", 0), probs.get("High Risk", 0), probs.get("Loneliness", 0), probs.get("Mental Health", 0)) * 100
+            
+            if risk_prob > 75:
+                severity_text = "Critical"
+                color = "#dc2626" # Deep Red
+            elif risk_prob > 50:
+                severity_text = "High"
+                color = "#ea580c" # Dark Orange
+            elif risk_prob > 30:
+                severity_text = "Medium"
+                color = "#eab308" # Amber/Yellow
             else:
-                label = f"{raw_label} Indicators"
+                severity_text = "Low"
+                color = "#10b981" # Emerald Green
+                
+            fig = go.Figure(go.Indicator(
+                mode = "gauge+number",
+                value = risk_prob,
+                number = {'suffix': "%", 'font': {'size': 24, 'color': '#1a1a1a'}},
+                title = {'text': severity_text, 'font': {'size': 28, 'color': color, 'weight': 'bold'}},
+                gauge = {
+                    'axis': {'range': [0, 100], 'visible': False},
+                    'bar': {'color': color, 'thickness': 0.25},
+                    'bgcolor': "#e2e8f0",
+                    'borderwidth': 0,
+                }
+            ))
+            fig.update_layout(height=250, margin=dict(l=0, r=0, t=20, b=10), paper_bgcolor="rgba(0,0,0,0)", font={'family': 'Inter'})
+            st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
+            
+            if severity_text in ["Critical", "High"]:
+                gauge_subtext = "Detection of urgency markers and severe emotional fatigue suggests a need for <b>immediate supportive intervention</b>."
+            elif severity_text == "Medium":
+                gauge_subtext = "Presence of distress indicators suggests a need to <b>monitor emotional well-being</b> and consider reaching out to a support system."
+            else:
+                gauge_subtext = "No immediate urgency markers detected. Always remember to prioritize <b>routine self-care</b> and mental wellness."
+                
+            if is_moderate_mixed or is_mild_mixed:
+                display_pred = "Mixed Emotional Signals"
+            elif pred == "Other":
+                display_pred = "Normal / No Concern"
+            else:
+                display_pred = pred
                 
             st.markdown(f"""
-            <div class='progress-label'>
-                <span>{label}</span>
-                <span>{int(val)}%</span>
+            <div style='text-align: center; margin-bottom: 0.75rem;'>
+                <span style='background-color: #f1f5f9; border: 1px solid #e2e8f0; padding: 4px 12px; border-radius: 20px; font-size: 0.75rem; color: #475569; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase;'>
+                    Primary Indicator: {display_pred}
+                </span>
             </div>
-            <div class='progress-bar-bg'>
-                <div class='progress-bar-fill' style='width: {val}%'></div>
+            <div style='text-align: center; font-size: 0.85rem; color: #495057; padding: 0 0.5rem;'>
+            {gauge_subtext}
             </div>
             """, unsafe_allow_html=True)
-            
-    with col2:
-        st.markdown("### Risk Profile")
-        
-        # Risk Severity Gauge using Plotly
-        risk_prob = max(probs.get("Anxiety", 0), probs.get("Depression", 0), probs.get("High Risk", 0), probs.get("Loneliness", 0), probs.get("Mental Health", 0)) * 100
-        
-        if risk_prob > 75:
-            severity_text = "Critical"
-            color = "#dc2626" # Deep Red
-        elif risk_prob > 50:
-            severity_text = "High"
-            color = "#ea580c" # Dark Orange
-        elif risk_prob > 30:
-            severity_text = "Medium"
-            color = "#eab308" # Amber/Yellow
-        else:
-            severity_text = "Low"
-            color = "#10b981" # Emerald Green
-            
-        fig = go.Figure(go.Indicator(
-            mode = "gauge+number",
-            value = risk_prob,
-            number = {'suffix': "%", 'font': {'size': 24, 'color': '#1a1a1a'}},
-            title = {'text': severity_text, 'font': {'size': 28, 'color': color, 'weight': 'bold'}},
-            gauge = {
-                'axis': {'range': [0, 100], 'visible': False},
-                'bar': {'color': color, 'thickness': 0.25},
-                'bgcolor': "#e2e8f0",
-                'borderwidth': 0,
-            }
-        ))
-        fig.update_layout(height=250, margin=dict(l=20, r=20, t=30, b=20), paper_bgcolor="rgba(0,0,0,0)", font={'family': 'Inter'})
-        st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
-        
-        if severity_text in ["Critical", "High"]:
-            gauge_subtext = "Detection of urgency markers and severe emotional fatigue suggests a need for <b>immediate supportive intervention</b>."
-        elif severity_text == "Medium":
-            gauge_subtext = "Presence of distress indicators suggests a need to <b>monitor emotional well-being</b> and consider reaching out to a support system."
-        else:
-            gauge_subtext = "No immediate urgency markers detected. Always remember to prioritize <b>routine self-care</b> and mental wellness."
-            
-        if is_mixed:
-            display_pred = "Mixed Emotional Distress"
-        elif pred == "Other":
-            display_pred = "Normal / No Concern"
-        else:
-            display_pred = pred
-            
-        st.markdown(f"""
-        <div style='text-align: center; margin-bottom: 0.75rem;'>
-            <span style='background-color: #f1f5f9; border: 1px solid #e2e8f0; padding: 4px 12px; border-radius: 20px; font-size: 0.75rem; color: #475569; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase;'>
-                Primary Indicator: {display_pred}
-            </span>
-        </div>
-        <div style='text-align: center; font-size: 0.85rem; color: #495057; padding: 0 1rem;'>
-        {gauge_subtext}
-        </div>
-        """, unsafe_allow_html=True)
-        
+
     st.write("")
     
-    # Bottom Row Actions
-    col3, col4 = st.columns([1.5, 1])
+    # === BOTTOM ROW: Confidence Breakdown & Actions ===
+    row2_col_breakdown, row2_col_actions = st.columns([1.5, 1])
     
-    with col3:
-        if st.button("Start New Analysis", use_container_width=True, type="primary"):
-            st.session_state.analysis_results = None
-            st.rerun()
+    with row2_col_breakdown:
+        with st.container(border=True):
+            st.markdown("<h3 style='margin-top: 0;'>Confidence Breakdown</h3>", unsafe_allow_html=True)
+            st.write("")
             
-        st.markdown("""
-        <div class='about-card'>
-            <div class='about-text'>
-                <h4>About our AI Analysis</h4>
-                <p>These results are generated using natural language processing models. While highly indicative, they do not constitute a clinical diagnosis. We recommend discussing these findings with a qualified mental health professional.</p>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-        
-    with col4:
+            # Dynamically show all probabilities sorted by confidence
+            sorted_probs = sorted(probs.items(), key=lambda x: x[1], reverse=True)
+            
+            for raw_label, val_dec in sorted_probs:
+                val = val_dec * 100
+                
+                # Map labels to friendly UI text
+                if raw_label in ["Normal", "Other"]:
+                    label = "Normal / No Concern"
+                elif raw_label == "High Risk":
+                    label = "High Risk / Severity"
+                elif raw_label == "Mild":
+                    label = "Mild Stress Indicators"
+                else:
+                    label = f"{raw_label} Indicators"
+                    
+                st.markdown(f"""
+                <div class='progress-label'>
+                    <span>{label}</span>
+                    <span>{int(val)}%</span>
+                </div>
+                <div class='progress-bar-bg'>
+                    <div class='progress-bar-fill' style='width: {val}%'></div>
+                </div>
+                """, unsafe_allow_html=True)
+            
+    with row2_col_actions:
+        # Support Card
         support_numbers = {
             "United States": {"call": "988", "text_label": "Text 'HOME' to", "text_val": "741741"},
             "United Kingdom": {"call": "111", "text_label": "Text 'SHOUT' to", "text_val": "85258"},
@@ -683,7 +692,7 @@ else:
         region_data = support_numbers.get(st.session_state.user_region, support_numbers["India"])
         
         st.markdown(f"""
-        <div class='support-card'>
+        <div class='support-card' style='margin-top: 0;'>
             <div class='support-title'>IMMEDIATE SUPPORT</div>
             <div class='support-box'>
                 <div>
@@ -698,6 +707,20 @@ else:
                 </div>
             </div>
             <a href='https://findahelpline.com/' target='_blank' class='support-link'>Find local clinical teams →</a>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        st.write("")
+        if st.button("Start New Analysis", use_container_width=True, type="primary"):
+            st.session_state.analysis_results = None
+            st.rerun()
+            
+        st.markdown("""
+        <div class='about-card' style='margin-top: 1rem;'>
+            <div class='about-text'>
+                <h4 style='margin-top: 0;'>About our AI Analysis</h4>
+                <p style='margin-bottom: 0;'>These results are generated using natural language processing models. While highly indicative, they do not constitute a clinical diagnosis. We recommend discussing these findings with a qualified mental health professional.</p>
+            </div>
         </div>
         """, unsafe_allow_html=True)
 
